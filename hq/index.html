@@ -135,6 +135,12 @@ body.drone #panel, body.drone #hint, body.drone #walkpad{display:none!important}
 #bm textarea{min-height:52px}
 #bm label.chk{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--fg)}
 #bmMsg,#aprMsg,#jobMsg{font-size:12px;color:var(--muted);margin:0}
+.lbl.boss{border-color:#85E20B;background:rgba(18,26,8,.92)}
+.lbl.boss b{color:#85E20B}
+#ceoGoal{margin:0;font-size:12.5px;color:var(--fg)}
+#ceoList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+#ceoList li{border:1px solid var(--line);border-left:3px solid #85E20B;border-radius:8px;padding:7px 9px;font-size:12.5px;background:rgba(255,255,255,.02)}
+#ceoList time{display:block;font:500 10.5px var(--mono);color:var(--muted);margin-bottom:2px}
 #jobStats{font:600 11.5px var(--mono);color:var(--accent);margin:0}
 #jobList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
 #jobList li{border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12.5px;display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,.02)}
@@ -185,6 +191,11 @@ body.drone #panel, body.drone #hint, body.drone #walkpad{display:none!important}
   </div>
   <div id="scroll">
     <ul id="roster"></ul>
+    <section id="ceoSec" class="sect" aria-live="polite">
+      <h3>Geschäftsführer · Rex <span class="pill" id="ceoPill">verbinde…</span></h3>
+      <p id="ceoGoal">Ziel: BRNDX ins Plus bringen.</p>
+      <ul id="ceoList"><li>Noch keine Anweisungen. Rex prüft stündlich die Lage und verteilt die Arbeit.</li></ul>
+    </section>
     <section id="bm" class="sect" hidden>
       <h3>Marken-Profil</h3>
       <div id="bmFields" style="display:flex;flex-direction:column;gap:8px"></div>
@@ -591,6 +602,20 @@ const agents = DEPTS.map((d,i)=>{
   return { d, o, ...person, path:[], pose:"sit", activity:"arbeitet am Rechner", timer: 1+Math.random()*4, phase:Math.random()*10, faceTo:null, busyUntil:0, after:null };
 });
 const A = id => agents.find(a=>a.d.id===id);
+/* ---------- Geschäftsführer: works 24/7, walks from department to department ---------- */
+const CEO = { id:"ceo", name:"Geschäftsführung", who:"Rex", role:"Geschäftsführer · einziges Ziel: BRNDX ins Plus", color:0x85E20B,
+  look:{sex:"m", skin:0xe8c09a, hair:"side", hairC:0x1b1b1b, top:0x1c1f24, jacket:true, pants:0x111316} };
+const CEO_HOME = new THREE.Vector3(0,0,-4.9);
+const ceo = (()=>{ const p=makePerson(CEO.look, CEO.color); scene.add(p.root); p.root.position.copy(CEO_HOME); p.root.rotation.y=Math.PI; p.hit.userData.dept="ceo";
+  return { d:CEO, o:null, ceo:true, ...p, path:[], pose:"stand", activity:"prüft die Zahlen", timer:1.5, phase:0, faceTo:null, busyUntil:0, after:null, faceTarget:null, nextFace:Math.PI }; })();
+agents.push(ceo); state.status.ceo="working";
+let ceoNext=null;
+function ceoThink(a){
+  a.faceTarget=null;
+  if(a.root.position.distanceTo(CEO_HOME) > 0.6){ goTo(a, CEO_HOME.clone(), "stand", "prüft die Zahlen am Holo-Tisch", Math.PI, ()=>{ a.faceTarget={root:{position:new THREE.Vector3(0,0,-2.2)}}; }); return; }
+  const id = ceoNext || DEPTS[Math.random()*DEPTS.length|0].id; ceoNext=null; const tgt=A(id);
+  goTo(a, tgt.o.visitor.clone(), "stand", "gibt "+tgt.d.who+" Aufgaben", null, ()=>{ a.faceTarget=tgt; if(tgt.pose!=="walk" && state.status[id]!=="working") tgt.activity="bekommt Aufgaben vom Boss"; });
+}
 
 function goTo(a, pos, pose, activity, face, after){ a.path = plan(a.root.position, pos); a.pose="walk"; a.nextPose=pose; a.nextActivity=activity; a.nextFace=face; a.after=after||null; a.activity = activity ? "unterwegs: " + activity : "unterwegs"; }
 function goDesk(a, activity="arbeitet am Rechner", after){ goTo(a, a.o.seat, "sit", activity, a.o.seatFacing, after); }
@@ -604,6 +629,7 @@ const IDLE = [
   a => goTo(a, new THREE.Vector3((Math.random()-.5)*3,0,6.5), "stand", "am Empfang", Math.PI),
 ];
 function idleThink(a){
+  if(a.ceo) return ceoThink(a);
   a.P.cup.visible=false; a.P.phone.visible=false; a.faceTarget=null;
   if(state.status[a.d.id]==="working" || state.meeting) return;
   if(a.pose==="sit"){ (IDLE[Math.random()*IDLE.length|0])(a); }
@@ -742,9 +768,11 @@ function updateAgents(dt,t){
     }
     pose(a,dt,t);
     // screens
+    if(!a.ceo){
     const st = state.status[a.d.id];
     const mode = (st==="working" && a.pose==="sit" && a.root.position.distanceTo(a.o.seat)<.3) ? "work" : "idle";
     if(a.scrMode!==mode || (mode==="work" && (t - (a.scrT||0))>.35)){ a.scrMode=mode; a.scrT=t; a.o.scr.forEach((m,k)=>{ if(m.map) m.map.dispose(); m.map = screenTexture(a.d, mode, 6+((t*3+k)%6|0)); m.needsUpdate=true; }); }
+    }
     a.sel.material.opacity = state.sel===a.d.id ? .9 : 0;
   });
 }
@@ -791,7 +819,7 @@ function frame(){
     const vis = proj.z<1 && proj.x>-1.1 && proj.x<1.1 && proj.y>-1.1 && proj.y<1.1 && (sy - 30) > topB && sy < panB;
     const dist = camera.position.distanceTo(a.root.position);
     a.lbl.style.left = ((proj.x+1)/2*w)+"px"; a.lbl.style.top = ((1-proj.y)/2*h)+"px";
-    const cls = "lbl " + state.status[a.d.id] + (state.sel===a.d.id?" sel":"") + ((!vis || (state.mode==="walk" && dist>14))?" far":"") + (((state.mode==="overview"||state.mode==="drone") && state.sel!==a.d.id)?" compact":"");
+    const cls = "lbl " + (a.ceo?"working boss":state.status[a.d.id]) + (state.sel===a.d.id?" sel":"") + ((!vis || (state.mode==="walk" && dist>14))?" far":"") + (((state.mode==="overview"||state.mode==="drone") && state.sel!==a.d.id)?" compact":"");
     if(a.lbl.className!==cls) a.lbl.className=cls;
     const act = " · " + (a.activity||"");
     if(a.lblAct.textContent!==act) a.lblAct.textContent=act;
@@ -836,6 +864,7 @@ function renderDetail(){
   renderFlow();
 }
 function select(id, focus){
+  if(id==="ceo"){ if(innerWidth<=760) $("panel").classList.remove("min"); $("ceoSec").scrollIntoView({block:"start", behavior:"smooth"}); if(focus && state.mode!=="walk"){ if(state.mode==="overview") setMode("follow"); } return; }
   state.sel=id; renderRoster(); renderDetail();
   if(state.runs[id]){ const rt=state.runs[id].task; state.shown=rt.id; $("out").textContent=rt.partial||""; renderReview(); } else { const last = state.tasks.filter(t=>t.dept===id&&t.result&&(t.brand||"brndx")===brandId).sort((a,b)=>b.created-a.created)[0]; $("out").textContent = last?last.result:""; state.shown = last?last.id:null; renderReview(); }
   if(focus && state.mode!=="walk"){ const a=A(id); if(state.mode==="overview") setMode("follow"); cam.tTarget.set(a.root.position.x,1.0,a.root.position.z); }
@@ -1028,6 +1057,9 @@ try{ const loc=JSON.parse(localStorage.getItem(LS)||"[]"); if(Array.isArray(loc)
       renderRoster(); renderDetail(); renderReview(); renderApprovals();
     }, ()=>{ clearTimeout(timer); $("sDb").textContent="Speicher: nicht erreichbar"; });
     db.collection("brands").onSnapshot(snap=>{ const list=snap.docs.map(s=>s.data()).filter(b=>b&&b.id&&b.name); if(list.length){ brands=list; applyBrand(); } }, ()=>{});
+    db.collection("orders").orderBy("at","desc").limit(20).onSnapshot(snap=>{ ceoOrders = snap.docs.map(s=>s.data()).filter(o=>o&&o.at); renderCeo();
+      const top = ceoOrders[0]; if(top && top.at>ceoSeen){ if(ceoSeen && byId(top.dept)){ ceoNext=top.dept; ceo.timer=0; const ag=A(top.dept); if(ag && state.status[top.dept]!=="working") ag.activity="Auftrag vom Boss: "+String(top.text||"").slice(0,40); } ceoSeen=top.at; }
+    }, ()=>{});
     db.collection("jobs").limit(500).onSnapshot(snap=>{ jobs = snap.docs.map(s=>s.data()).filter(j=>j&&j.id); renderJobs(); }, ()=>{ $("jobMsg").textContent="Aufträge konnten nicht geladen werden."; });
     db.collection("rejected").limit(500).onSnapshot(snap=>{ Object.keys(rejected).forEach(k=>delete rejected[k]); snap.docs.forEach(s=>{ const r=s.data(); if(r&&r.uuid) rejected[r.uuid]=true; }); renderApprovals(); }, ()=>{});
   }
@@ -1156,10 +1188,23 @@ let jobs = [];
 const jobUi = { open:null, filter:"aktiv" };
 const money = n => (Math.round(Number(n)||0)).toLocaleString("de-DE")+" €";
 function jobTasks(id){ return state.tasks.filter(t=>t.job===id).sort((a,b)=>b.created-a.created); }
+let ceoOrders=[], ceoSeen=0;
+function renderCeo(){
+  const paid = jobs.filter(j=>j.stage==="bezahlt").reduce((s,j)=>s+(Number(j.amount)||0),0);
+  const pipe = jobs.filter(j=>["angebot","gewonnen","arbeit","freigabe","geliefert"].includes(j.stage)).reduce((s,j)=>s+(Number(j.amount)||0),0);
+  const t = (ap.list||[]).find(x=>x.name==="BRNDX Geschäftsführer");
+  const pill=$("ceoPill"); pill.className="pill"+(t&&t.enabled?" on":""); pill.textContent = t ? (t.enabled ? "24/7 aktiv" : "pausiert") : (mcp ? "nicht gefunden" : "24/7");
+  $("ceoGoal").textContent = `Ziel: BRNDX ins Plus. Bezahlt: ${money(paid)} · in der Pipeline: ${money(pipe)}`+(t&&t.enabled&&t.next_run_at?` · nächste Lageprüfung ${fmt(t.next_run_at)}`:"");
+  const ul=$("ceoList"); if(!ceoOrders.length) return; ul.innerHTML="";
+  ceoOrders.slice(0,6).forEach(o=>{ const li=document.createElement("li"); const tm=document.createElement("time");
+    tm.textContent = new Date(o.at).toLocaleString("de-DE",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})+" · an "+(byId(o.dept)?byId(o.dept).name+" ("+byId(o.dept).who+")":(o.dept||"alle"))+(o.status?" · "+o.status:"");
+    const sp=document.createElement("span"); sp.textContent=o.text||""; li.append(tm,sp); ul.appendChild(li); });
+}
 function renderJobs(){
   const ul=$("jobList"); if(!ul) return; ul.innerHTML="";
   const paid = jobs.filter(j=>j.stage==="bezahlt").reduce((s,j)=>s+(Number(j.amount)||0),0);
   const pipe = jobs.filter(j=>["angebot","gewonnen","arbeit","freigabe","geliefert"].includes(j.stage)).reduce((s,j)=>s+(Number(j.amount)||0),0);
+  renderCeo();
   $("jobStats").textContent = `Bezahlt: ${money(paid)} · offen in Arbeit/Angebot: ${money(pipe)} · ${jobs.length} Einträge`;
   const active = j => !["bezahlt","verloren"].includes(j.stage);
   const list = jobs.filter(j=> jobUi.filter==="alle" ? true : jobUi.filter==="aktiv" ? active(j) : j.stage===jobUi.filter)

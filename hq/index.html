@@ -934,10 +934,23 @@ function renderReview(){
   $("revTxt").textContent = { review:"QA bestanden. Wartet auf deine Freigabe.", approved:"Freigegeben.", rejected:"Abgelehnt.", blocked:"Von der QA gesperrt: "+(((t.qa&&t.qa.issues)||[]).join(" ")||"Regelverstoß.") }[t.status];
   $("revOk").hidden = $("revNo").hidden = t.status!=="review"; $("revCopy").hidden = t.status!=="approved";
 }
-async function decide(status){ const t=state.tasks.find(x=>x.id===state.shown); if(!t || t.status!=="review") return;
-  t.status=status; t.decided=Date.now(); renderRoster(); renderDetail(); renderReview(); renderApprovals(); await save(t); }
-$("revOk").onclick=()=>decide("approved");
-$("revNo").onclick=()=>decide("rejected");
+function showTask(id){ const t=state.tasks.find(x=>x.id===id); if(!t) return;
+  if(state.sel!==t.dept) select(t.dept,false);
+  state.shown=t.id; $("out").textContent=t.result||""; renderReview();
+  if(innerWidth<=760) $("panel").classList.remove("min");
+  $("rev").scrollIntoView({block:"center", behavior:"smooth"}); }
+async function decideTask(id, status){
+  const t=state.tasks.find(x=>x.id===id);
+  if(!t){ $("note").textContent="Diesen Auftrag finde ich nicht mehr. Lade die Seite neu."; return; }
+  if(t.status!=="review"){ $("note").textContent="Dieser Auftrag ist nicht mehr offen (Status: "+(ST_LBL[t.status]||t.status)+")."; renderReview(); renderApprovals(); return; }
+  t.status=status; t.decided=Date.now();
+  $("note").textContent = status==="approved" ? "Freigegeben. Tipp auf „Text kopieren“, um ihn zu verwenden." : "Abgelehnt.";
+  renderRoster(); renderDetail(); renderReview(); renderApprovals();
+  if(db){ try{ await db.collection("tasks").doc(t.id).set({...t}); }catch(e){ $("note").textContent="Entscheidung angezeigt, aber nicht gespeichert. Prüf deine Verbindung und versuch es noch einmal."; t.status="review"; renderReview(); renderApprovals(); } }
+  else save(t);
+}
+$("revOk").onclick=()=>{ if(!state.shown){ $("note").textContent="Wähl zuerst ein Ergebnis aus."; return; } decideTask(state.shown,"approved"); };
+$("revNo").onclick=()=>{ if(!state.shown){ $("note").textContent="Wähl zuerst ein Ergebnis aus."; return; } decideTask(state.shown,"rejected"); };
 $("revCopy").onclick=async()=>{ const t=state.tasks.find(x=>x.id===state.shown); if(!t) return; try{ await navigator.clipboard.writeText(t.result); $("note").textContent="Text kopiert."; }catch(e){ $("note").textContent="Kopieren hat nicht geklappt. Markier den Text und kopier ihn von Hand."; } };
 $("go").onclick=runTask;
 $("stop").onclick=()=>state.running?.ctl.abort();
@@ -1060,37 +1073,64 @@ function postInfo(p){
   info.providers.forEach(x=>{ const k=x.network+"Data"; if(p[k]) info[k]=p[k]; });
   return info;
 }
+const aprUi = {}; // per-draft UI state that survives re-renders: {confirm, busy, msg, done}
+function draftIssues(p){ const out=[];
+  if(new Date(p.publicationDate.dateTime).getTime() < Date.now()+5*60000) out.push("Der Termin ist schon vorbei. Verschieb den Entwurf in Metricool auf ein späteres Datum.");
+  if(!(p.media||[]).length) out.push("Der Entwurf hat kein Bild oder Video.");
+  return out.concat(hardCheck(p.text, brand(), "content"));
+}
 async function approveDraft(p){
-  const b=brand();
-  if(new Date(p.publicationDate.dateTime).getTime() < Date.now()+5*60000){ $("aprMsg").textContent="Der geplante Termin ist schon vorbei. Verschieb den Entwurf in Metricool und gib ihn dort frei."; return; }
-  const issues = hardCheck(p.text, b, "content");
-  if(issues.length){ $("aprMsg").textContent="Nicht freigegeben, die QA sperrt den Text: "+issues.join(" "); return; }
-  $("aprMsg").textContent="Gebe frei…";
+  const u = aprUi[p.uuid] = aprUi[p.uuid]||{}; const b=brand();
+  const issues = draftIssues(p);
+  if(issues.length){ u.confirm=false; u.msg="Gesperrt: "+issues.join(" "); renderApprovals(); return; }
+  if(!mcp){ u.msg="Metricool ist in dieser Ansicht nicht verbunden."; renderApprovals(); return; }
+  u.busy=true; u.confirm=false; u.msg="Gebe frei … (beim ersten Mal fragt Claude nach deiner Erlaubnis für Metricool)"; renderApprovals();
   try{ await mcp.callTool(MC,"updateScheduledPost",{blogId:String(b.metricoolId), id:String(p.id), uuid:String(p.uuid), info:JSON.stringify(postInfo(p))});
-    $("aprMsg").textContent="Freigegeben. Der Post geht am "+fmtLocal(p.publicationDate.dateTime)+" raus."; mcp.invalidate(MC,"getScheduledPosts").catch(()=>{}); }
-  catch(e){ $("aprMsg").textContent = e.code==="server_unavailable"||e.code==="upstream_error" ? "Unklar, ob die Freigabe angekommen ist. Prüf den Post in Metricool, bevor du es noch einmal versuchst." : apErr(e,"Metricool"); }
+    u.done=true; u.msg="Freigegeben. Der Post geht am "+fmtLocal(p.publicationDate.dateTime)+" raus."; mcp.invalidate(MC,"getScheduledPosts").catch(()=>{}); }
+  catch(e){ u.msg = e.code==="server_unavailable"||e.code==="upstream_error" ? "Unklar, ob die Freigabe angekommen ist. Prüf den Post in Metricool, bevor du es noch einmal versuchst." : (e.code==="tool_error" ? "Metricool lehnt ab: "+(e.message||"unbekannter Fehler").slice(0,160) : apErr(e,"Metricool")); }
+  u.busy=false; renderApprovals();
 }
 async function rejectDraft(p){
-  rejected[p.uuid]=true; renderApprovals();
+  const u = aprUi[p.uuid] = aprUi[p.uuid]||{};
+  rejected[p.uuid]=true; u.confirm=false;
   $("aprMsg").textContent="Abgelehnt. Der Entwurf bleibt in Metricool liegen und wird nicht veröffentlicht.";
+  renderApprovals();
   if(db){ try{ await db.collection("rejected").doc("p"+String(p.uuid).replace(/[^A-Za-z0-9_-]/g,"")).set({uuid:String(p.uuid), brand:brand().id, at:Date.now()}); }catch(e){ $("aprMsg").textContent="Abgelehnt, aber nicht gespeichert. Nach dem Neuladen taucht der Entwurf wieder auf."; } }
 }
 function renderApprovals(){
   const ul=$("aprList"); if(!ul) return; ul.innerHTML="";
-  const drafts = (ap.posts||[]).filter(p=>p.draft && !rejected[p.uuid]);
+  const drafts = (ap.posts||[]).filter(p=>(p.draft || (aprUi[p.uuid]&&aprUi[p.uuid].done)) && !rejected[p.uuid]);
   const tasks = state.tasks.filter(t=>t.status==="review" && (t.brand||"brndx")===brandId).sort((a,b)=>b.created-a.created);
-  const n = drafts.length+tasks.length; $("aprPill").textContent=String(n); $("aprPill").className="pill"+(n?" on":"");
-  drafts.forEach(p=>{ const li=document.createElement("li"); const ty={POST:"Post",REEL:"Reel",STORY:"Story",TRIAL_REEL:"Reel"}[p.instagramData?.type]||"Post";
-    li.innerHTML='<time></time><span></span><div class="row"><button class="pri">Freigeben</button><button class="sec">Ablehnen</button></div>';
-    li.querySelector("time").textContent="Metricool-Entwurf · "+ty+" · "+fmtLocal(p.publicationDate?.dateTime);
-    const sp=li.querySelector("span"); sp.textContent=(p.text||"(ohne Text)").split("\n")[0]; sp.title=p.text||"";
-    const [ok,no]=li.querySelectorAll("button"); let armed=0;
-    ok.onclick=()=>{ if(Date.now()-armed<5000){ ok.disabled=no.disabled=true; approveDraft(p); } else { armed=Date.now(); ok.textContent="Sicher? Nochmal tippen"; setTimeout(()=>{ if(ok.isConnected) ok.textContent="Freigeben"; },5000); } };
-    no.onclick=()=>rejectDraft(p); ul.appendChild(li); });
-  tasks.forEach(t=>{ const li=document.createElement("li"); li.className="t"; li.tabIndex=0; li.innerHTML="<time></time><span></span>";
-    li.querySelector("time").textContent=byId(t.dept).name+" · QA bestanden · antippen zum Prüfen"; li.querySelector("span").textContent=t.prompt;
-    li.onclick=()=>{ select(t.dept,false); state.shown=t.id; $("out").textContent=t.result||""; renderReview(); $("rev").scrollIntoView({block:"center"}); }; ul.appendChild(li); });
-  if(!n){ const li=document.createElement("li"); li.innerHTML="<span></span>"; li.querySelector("span").textContent="Nichts wartet auf Freigabe."; ul.appendChild(li); }
+  const open = drafts.filter(p=>!(aprUi[p.uuid]&&aprUi[p.uuid].done)).length + tasks.length;
+  $("aprPill").textContent=String(open); $("aprPill").className="pill"+(open?" on":"");
+  drafts.forEach(p=>{ const u=aprUi[p.uuid]||{}; const li=document.createElement("li");
+    const ty={POST:"Post",REEL:"Reel",STORY:"Story",TRIAL_REEL:"Reel"}[p.instagramData?.type]||"Post";
+    const tm=document.createElement("time"); tm.textContent="Metricool-Entwurf · "+ty+" · "+fmtLocal(p.publicationDate?.dateTime);
+    const sp=document.createElement("span"); sp.textContent=(p.text||"(ohne Text)").split("\n")[0]; sp.title=p.text||"";
+    li.append(tm,sp);
+    const issues = u.done ? [] : draftIssues(p);
+    if(issues.length && !u.msg){ u.msg="Gesperrt: "+issues.join(" "); }
+    const row=document.createElement("div"); row.className="row";
+    const mk=(cls,txt,fn,dis)=>{ const bt=document.createElement("button"); bt.type="button"; bt.className=cls; bt.textContent=txt; bt.disabled=!!dis; bt.addEventListener("click",ev=>{ ev.stopPropagation(); fn(); }); row.appendChild(bt); };
+    if(u.done){ /* nothing to do */ }
+    else if(u.busy){ mk("pri","Wird freigegeben …",()=>{},true); }
+    else if(u.confirm){ mk("pri","Ja, am "+fmtLocal(p.publicationDate?.dateTime)+" posten",()=>approveDraft(p)); mk("sec","Abbrechen",()=>{ u.confirm=false; renderApprovals(); }); }
+    else { mk("pri","Freigeben",()=>{ aprUi[p.uuid]=Object.assign(u,{confirm:true,msg:""}); renderApprovals(); }, issues.length>0); mk("sec","Ablehnen",()=>rejectDraft(p)); }
+    if(row.children.length) li.appendChild(row);
+    if(u.msg){ const m=document.createElement("small"); m.style.cssText="display:block;font-size:12px;color:"+(u.done?"var(--accent)":(issues.length||/Gesperrt|lehnt|nicht|Unklar/.test(u.msg))?"#ff9a9a":"var(--muted)"); m.textContent=u.msg; li.appendChild(m); }
+    ul.appendChild(li); });
+  tasks.forEach(t=>{ const li=document.createElement("li"); li.className="t"; li.tabIndex=0;
+    const tm=document.createElement("time"); tm.textContent=byId(t.dept).name+" · QA bestanden"; const sp=document.createElement("span"); sp.textContent=t.prompt;
+    const row=document.createElement("div"); row.className="row";
+    const b1=document.createElement("button"); b1.type="button"; b1.className="pri"; b1.textContent="Freigeben";
+    const b2=document.createElement("button"); b2.type="button"; b2.className="sec"; b2.textContent="Ansehen";
+    const b3=document.createElement("button"); b3.type="button"; b3.className="sec"; b3.textContent="Ablehnen";
+    b1.addEventListener("click",ev=>{ ev.stopPropagation(); decideTask(t.id,"approved"); });
+    b3.addEventListener("click",ev=>{ ev.stopPropagation(); decideTask(t.id,"rejected"); });
+    b2.addEventListener("click",ev=>{ ev.stopPropagation(); showTask(t.id); });
+    row.append(b1,b2,b3); li.append(tm,sp,row);
+    li.addEventListener("click",()=>showTask(t.id)); ul.appendChild(li); });
+  if(!drafts.length && !tasks.length){ const li=document.createElement("li"); const sp=document.createElement("span"); sp.textContent="Nichts wartet auf Freigabe."; li.appendChild(sp); ul.appendChild(li); }
 }
 async function initAP(){
   if(!window.claude?.use){ $("apPill").textContent="nur in Claude"; $("apMsg").textContent="Die Verbindung zu Metricool und zum Autopilot funktioniert nur, wenn die Seite in Claude geöffnet ist."; renderAP(); return; }

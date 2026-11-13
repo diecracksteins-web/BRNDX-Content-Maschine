@@ -134,7 +134,23 @@ body.drone #panel, body.drone #hint, body.drone #walkpad{display:none!important}
 #bm input[type=text]{width:100%;box-sizing:border-box;background:rgba(0,0,0,.35);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:9px 10px;font:14px var(--body)}
 #bm textarea{min-height:52px}
 #bm label.chk{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:var(--fg)}
-#bmMsg,#aprMsg{font-size:12px;color:var(--muted);margin:0}
+#bmMsg,#aprMsg,#jobMsg{font-size:12px;color:var(--muted);margin:0}
+#jobStats{font:600 11.5px var(--mono);color:var(--accent);margin:0}
+#jobList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+#jobList li{border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12.5px;display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,.02)}
+#jobList li.job{cursor:pointer}
+#jobList small{color:var(--muted);font-size:11.5px}
+.jh{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.jh b{font-weight:600;font-size:13px}
+.jst{flex:none;font:600 10px var(--mono);letter-spacing:.04em;padding:3px 7px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--muted)}
+.jst.s-gewonnen,.jst.s-arbeit,.jst.s-freigabe{background:rgba(245,181,74,.14);color:var(--warn)}
+.jst.s-geliefert,.jst.s-bezahlt{background:var(--accent-soft);color:var(--accent)}
+.jbox{display:flex;flex-direction:column;gap:8px;margin-top:6px;cursor:default}
+.jbox p{margin:0;white-space:pre-wrap;color:var(--fg)}
+.jbox a{color:var(--accent);font-size:12px}
+.sect select,.sect input[type=text]{flex:1;min-width:0;background:rgba(0,0,0,.35);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:8px 9px;font:13px var(--body)}
+#jobForm{display:flex;flex-direction:column;gap:7px}
+#jobForm textarea{min-height:52px}
 #aprList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
 #aprList li{border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12.5px;display:flex;flex-direction:column;gap:6px;background:rgba(255,255,255,.02)}
 #aprList li.t{cursor:pointer}
@@ -180,6 +196,20 @@ body.drone #panel, body.drone #hint, body.drone #walkpad{display:none!important}
       <h3>Freigaben <span class="pill" id="aprPill">0</span></h3>
       <ul id="aprList"></ul>
       <p id="aprMsg"></p>
+    </section>
+    <section id="jobs" class="sect" aria-live="polite">
+      <h3>Aufträge <select id="jobFilter" style="flex:none;max-width:150px"><option value="aktiv">Aktiv</option><option value="alle">Alle</option><option value="lead">Leads</option><option value="gewonnen">Gewonnen</option><option value="bezahlt">Bezahlt</option></select></h3>
+      <p id="jobStats"></p>
+      <ul id="jobList"></ul>
+      <details id="jobForm"><summary class="small" style="cursor:pointer;color:var(--muted);font:600 11px var(--mono);letter-spacing:.06em">+ AUFTRAG ANLEGEN</summary>
+        <input type="text" id="jf_title" placeholder="Titel, z. B. Instagram-Betreuung Café Mayr">
+        <input type="text" id="jf_client" placeholder="Kunde">
+        <div class="row"><select id="jf_source"><option>Direkt</option><option>Upwork</option><option>Kaltakquise</option><option>Instagram-DM</option><option>Empfehlung</option><option>Eigenkunde</option></select><select id="jf_stage"></select></div>
+        <div class="row"><select id="jf_dept"></select><input type="text" id="jf_amount" inputmode="decimal" placeholder="Betrag in €"></div>
+        <textarea id="jf_brief" placeholder="Was genau soll geliefert werden?"></textarea>
+        <button class="pri" id="jobAdd" type="button">Anlegen</button>
+      </details>
+      <p id="jobMsg"></p>
     </section>
     <section id="ap" aria-live="polite">
       <h3>Autonomer Modus <span class="pill" id="apPill">verbinde…</span></h3>
@@ -886,12 +916,12 @@ Antworte nur mit JSON in dieser Form: {"ok":true,"issues":[]} oder {"ok":false,"
 const ST_LBL = { working:"läuft", done:"fertig", review:"wartet auf Freigabe", approved:"freigegeben", rejected:"abgelehnt", blocked:"von der QA gesperrt", stopped:"abgebrochen" };
 const rejected = {};
 function setNote(dept, msg){ state.notes[dept]=msg; if(state.sel===dept) $("note").textContent=msg; }
-async function runTask(deptId, promptIn){
-  const d=byId(deptId||state.sel), b=brand(); const prompt=(promptIn!=null?promptIn:$("task").value).trim();
+async function runTask(deptId, promptIn, extra){
+  const d=byId(deptId||state.sel), b=(extra&&extra.brand&&brands.find(x=>x.id===extra.brand))||brand(); const prompt=(promptIn!=null?promptIn:$("task").value).trim();
   if(!prompt){ $("note").textContent="Schreib zuerst, was die Abteilung erledigen soll."; return; }
   if(!sample){ $("note").textContent="Aufträge an die KI laufen nur, wenn die Seite in Claude geöffnet ist und du Claude für sie erlaubst."; return; }
   if(state.runs[d.id]) return;
-  const task={ id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), dept:d.id, brand:b.id, prompt, result:"", status:"working", created:Date.now() };
+  const task={ id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6), dept:d.id, brand:b.id, job:(extra&&extra.job)||null, prompt, result:"", status:"working", created:Date.now() };
   state.tasks.push(task); state.status[d.id]="working"; const ctl=new AbortController(); state.runs[d.id]={ctl, task};
   const a=A(d.id); state.flow[d.id]={step:0, active:true}; startWorkflow(a);
   if(state.sel===d.id){ state.shown=task.id; $("out").textContent=""; } renderRoster(); renderDetail(); renderReview(); save(task);
@@ -998,6 +1028,7 @@ try{ const loc=JSON.parse(localStorage.getItem(LS)||"[]"); if(Array.isArray(loc)
       renderRoster(); renderDetail(); renderReview(); renderApprovals();
     }, ()=>{ clearTimeout(timer); $("sDb").textContent="Speicher: nicht erreichbar"; });
     db.collection("brands").onSnapshot(snap=>{ const list=snap.docs.map(s=>s.data()).filter(b=>b&&b.id&&b.name); if(list.length){ brands=list; applyBrand(); } }, ()=>{});
+    db.collection("jobs").limit(500).onSnapshot(snap=>{ jobs = snap.docs.map(s=>s.data()).filter(j=>j&&j.id); renderJobs(); }, ()=>{ $("jobMsg").textContent="Aufträge konnten nicht geladen werden."; });
     db.collection("rejected").limit(500).onSnapshot(snap=>{ Object.keys(rejected).forEach(k=>delete rejected[k]); snap.docs.forEach(s=>{ const r=s.data(); if(r&&r.uuid) rejected[r.uuid]=true; }); renderApprovals(); }, ()=>{});
   }
 })();
@@ -1118,6 +1149,91 @@ async function rejectDraft(p){
   renderApprovals();
   if(db){ try{ await db.collection("rejected").doc("p"+String(p.uuid).replace(/[^A-Za-z0-9_-]/g,"")).set({uuid:String(p.uuid), brand:brand().id, at:Date.now()}); }catch(e){ $("aprMsg").textContent="Abgelehnt, aber nicht gespeichert. Nach dem Neuladen taucht der Entwurf wieder auf."; } }
 }
+/* ---------- Aufträge: pipeline from lead to payment ---------- */
+const STAGES = [["lead","Lead"],["angebot","Angebot raus"],["gewonnen","Gewonnen"],["arbeit","In Arbeit"],["freigabe","Zur Freigabe"],["geliefert","Geliefert"],["bezahlt","Bezahlt"],["verloren","Verloren"]];
+const STAGE_LBL = Object.fromEntries(STAGES);
+let jobs = [];
+const jobUi = { open:null, filter:"aktiv" };
+const money = n => (Math.round(Number(n)||0)).toLocaleString("de-DE")+" €";
+function jobTasks(id){ return state.tasks.filter(t=>t.job===id).sort((a,b)=>b.created-a.created); }
+function renderJobs(){
+  const ul=$("jobList"); if(!ul) return; ul.innerHTML="";
+  const paid = jobs.filter(j=>j.stage==="bezahlt").reduce((s,j)=>s+(Number(j.amount)||0),0);
+  const pipe = jobs.filter(j=>["angebot","gewonnen","arbeit","freigabe","geliefert"].includes(j.stage)).reduce((s,j)=>s+(Number(j.amount)||0),0);
+  $("jobStats").textContent = `Bezahlt: ${money(paid)} · offen in Arbeit/Angebot: ${money(pipe)} · ${jobs.length} Einträge`;
+  const active = j => !["bezahlt","verloren"].includes(j.stage);
+  const list = jobs.filter(j=> jobUi.filter==="alle" ? true : jobUi.filter==="aktiv" ? active(j) : j.stage===jobUi.filter)
+    .sort((a,b)=> STAGES.findIndex(s=>s[0]===b.stage)-STAGES.findIndex(s=>s[0]===a.stage) || (b.updated||0)-(a.updated||0));
+  if(!list.length){ const li=document.createElement("li"); li.textContent = jobs.length ? "Keine Aufträge in diesem Filter." : "Noch keine Aufträge. Die Akquise-Aufgaben tragen gefundene Jobs und Leads hier ein, oder du legst unten selbst einen an."; ul.appendChild(li); return; }
+  list.forEach(j=>{
+    const li=document.createElement("li"); li.className="job";
+    const head=document.createElement("div"); head.className="jh";
+    const tt=document.createElement("b"); tt.textContent=j.title||"(ohne Titel)";
+    const st=document.createElement("span"); st.className="jst s-"+j.stage; st.textContent=STAGE_LBL[j.stage]||j.stage;
+    head.append(tt,st); li.appendChild(head);
+    const meta=document.createElement("small"); meta.textContent=[j.client, j.source, j.amount?money(j.amount):(j.budget||"")].filter(Boolean).join(" · "); li.appendChild(meta);
+    const tk=jobTasks(j.id)[0];
+    if(tk){ const s2=document.createElement("small"); s2.textContent="Letzte Teamarbeit: "+byId(tk.dept).name+" · "+(ST_LBL[tk.status]||tk.status); li.appendChild(s2); }
+    if(jobUi.open===j.id){
+      const box=document.createElement("div"); box.className="jbox";
+      if(j.brief){ const p=document.createElement("p"); p.textContent=j.brief; box.appendChild(p); }
+      if(j.url && /^https:\/\//.test(j.url)){ const a=document.createElement("a"); a.href=j.url; a.target="_blank"; a.rel="noopener"; a.textContent="Quelle öffnen"; box.appendChild(a); }
+      const row=document.createElement("div"); row.className="row";
+      const sel=document.createElement("select"); STAGES.forEach(([k,l])=>{ const o=document.createElement("option"); o.value=k; o.textContent=l; sel.appendChild(o); }); sel.value=j.stage;
+      sel.onchange=()=>saveJob(j,{stage:sel.value});
+      const dsel=document.createElement("select"); DEPTS.forEach(d=>{ const o=document.createElement("option"); o.value=d.id; o.textContent=d.name; dsel.appendChild(o); }); dsel.value=j.dept||"content";
+      dsel.onchange=()=>saveJob(j,{dept:dsel.value});
+      row.append(sel,dsel); box.appendChild(row);
+      const amt=document.createElement("input"); amt.type="text"; amt.inputMode="decimal"; amt.placeholder="Vereinbarter Betrag in € (nur echte Zahlen)"; amt.value=j.amount||"";
+      amt.onchange=()=>{ const v=parseFloat(String(amt.value).replace(",", ".")); saveJob(j,{amount: isFinite(v)&&v>=0 ? v : 0}); };
+      box.appendChild(amt);
+      const row2=document.createElement("div"); row2.className="row";
+      const go=document.createElement("button"); go.type="button"; go.className="pri"; go.textContent = state.runs[j.dept||"content"] ? "Abteilung arbeitet gerade…" : "Team bearbeiten lassen";
+      go.disabled = !!state.runs[j.dept||"content"] || !["gewonnen","arbeit","freigabe","lead","angebot"].includes(j.stage);
+      go.onclick=()=>workJob(j);
+      const view=document.createElement("button"); view.type="button"; view.className="sec"; view.textContent="Ergebnis ansehen"; view.disabled=!tk;
+      view.onclick=()=>{ if(tk) showTask(tk.id); };
+      row2.append(go,view); box.appendChild(row2);
+      const hint=document.createElement("small"); hint.textContent = ["lead","angebot"].includes(j.stage) ? "Im Status Lead oder Angebot schreibt das Team ein Angebot bzw. eine Bewerbung. Ab „Gewonnen“ erledigt es den Auftrag selbst." : "Das Ergebnis geht durch die QA und landet unter Freigaben. An den Kunden geht es erst, wenn du es abschickst.";
+      box.appendChild(hint);
+      li.appendChild(box);
+    }
+    li.addEventListener("click",e=>{ if(e.target.closest(".jbox")) return; jobUi.open = jobUi.open===j.id ? null : j.id; renderJobs(); });
+    ul.appendChild(li);
+  });
+}
+async function saveJob(j, patch){
+  if(!db){ $("jobMsg").textContent="Speichern geht nur, wenn die Seite in Claude geöffnet ist."; return; }
+  const nj = Object.assign({}, j, patch, {updated:Date.now()});
+  jobs = jobs.map(x=>x.id===j.id?nj:x); renderJobs();
+  try{ await db.collection("jobs").doc(j.id).set(nj); $("jobMsg").textContent=""; }
+  catch(e){ jobs = jobs.map(x=>x.id===j.id?j:x); renderJobs(); $("jobMsg").textContent="Nicht gespeichert ("+(e&&e.code||"Fehler")+")."; }
+}
+async function workJob(j){
+  const dept = j.dept||"content";
+  const pre = ["lead","angebot"].includes(j.stage);
+  const prompt = pre
+    ? `Schreib für BRNDX.media ein kurzes, ehrliches Angebot bzw. eine Bewerbung für diesen möglichen Auftrag. Nenne, was wir konkret liefern, wie wir vorgehen (KI-gestützt, von Armin geprüft) und den nächsten Schritt. Keine erfundenen Referenzen oder Zahlen.\nAuftrag: ${j.title}\nKunde: ${j.client||"unbekannt"}\nQuelle: ${j.source||"-"}\nBudget: ${j.budget||"-"}\nDetails: ${j.brief||"-"}`
+    : `Erledige diesen Kundenauftrag als fertiges Lieferergebnis, das Armin nach Prüfung direkt an den Kunden schicken kann.\nAuftrag: ${j.title}\nKunde: ${j.client||"unbekannt"}\nDetails und Anforderungen: ${j.brief||"-"}`;
+  if(!pre && j.stage==="gewonnen") await saveJob(j,{stage:"arbeit"});
+  select(dept,false);
+  await runTask(dept, prompt, {job:j.id, brand:j.brand});
+  const t = jobTasks(j.id)[0], cur = jobs.find(x=>x.id===j.id)||j;
+  if(t && t.status==="review" && !pre) await saveJob(cur,{stage:"freigabe"});
+}
+$("jobFilter").onchange=e=>{ jobUi.filter=e.target.value; renderJobs(); };
+$("jobAdd").onclick=async()=>{
+  const title=$("jf_title").value.trim(); if(!title){ $("jobMsg").textContent="Gib dem Auftrag einen Titel."; return; }
+  if(!db){ $("jobMsg").textContent="Speichern geht nur, wenn die Seite in Claude geöffnet ist."; return; }
+  const v=parseFloat(String($("jf_amount").value).replace(",","."));
+  const j={ id:"j"+Date.now().toString(36)+Math.random().toString(36).slice(2,5), title, client:$("jf_client").value.trim(), source:$("jf_source").value, brief:$("jf_brief").value.trim(),
+    stage:$("jf_stage").value, dept:$("jf_dept").value, amount: isFinite(v)&&v>=0 ? v : 0, budget:"", url:"", brand:"", created:Date.now(), updated:Date.now() };
+  try{ await db.collection("jobs").doc(j.id).set(j); ["jf_title","jf_client","jf_brief","jf_amount"].forEach(id=>$(id).value=""); $("jobMsg").textContent="Auftrag angelegt."; }
+  catch(e){ $("jobMsg").textContent="Nicht gespeichert ("+(e&&e.code||"Fehler")+")."; }
+};
+(()=>{ const s=$("jf_stage"); STAGES.slice(0,4).forEach(([k,l])=>{ const o=document.createElement("option"); o.value=k; o.textContent=l; s.appendChild(o); });
+  const d=$("jf_dept"); DEPTS.forEach(x=>{ const o=document.createElement("option"); o.value=x.id; o.textContent=x.name; d.appendChild(o); }); d.value="content"; })();
+
 function renderApprovals(){
   const ul=$("aprList"); if(!ul) return; ul.innerHTML="";
   const drafts = (ap.posts||[]).filter(p=>(p.draft || (aprUi[p.uuid]&&aprUi[p.uuid].done)) && !rejected[p.uuid]);
@@ -1151,6 +1267,7 @@ function renderApprovals(){
     b2.addEventListener("click",ev=>{ ev.stopPropagation(); showTask(t.id); });
     row.append(b1,b2,b3); li.append(tm,sp,row);
     li.addEventListener("click",()=>showTask(t.id)); ul.appendChild(li); });
+  renderJobs();
   if(!drafts.length && !tasks.length){ const li=document.createElement("li"); const sp=document.createElement("span"); sp.textContent="Nichts wartet auf Freigabe."; li.appendChild(sp); ul.appendChild(li); }
 }
 async function initAP(){

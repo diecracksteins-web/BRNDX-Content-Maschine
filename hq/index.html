@@ -943,14 +943,20 @@ async function decideTask(id, status){
   const t=state.tasks.find(x=>x.id===id);
   if(!t){ $("note").textContent="Diesen Auftrag finde ich nicht mehr. Lade die Seite neu."; return; }
   if(t.status!=="review"){ $("note").textContent="Dieser Auftrag ist nicht mehr offen (Status: "+(ST_LBL[t.status]||t.status)+")."; renderReview(); renderApprovals(); return; }
-  t.status=status; t.decided=Date.now();
-  $("note").textContent = status==="approved" ? "Freigegeben. Tipp auf „Text kopieren“, um ihn zu verwenden." : "Abgelehnt.";
+  // rows from the shared database are read-only snapshots: never mutate them, replace them with a copy
+  const nt = Object.assign({}, t, {status, decided:Date.now()});
+  const swap = obj => { state.tasks = state.tasks.map(x=>x.id===obj.id ? obj : x); };
+  swap(nt);
+  const msg = status==="approved" ? "Freigegeben. Tipp auf „Text kopieren“, um ihn zu verwenden." : "Abgelehnt.";
+  $("note").textContent = msg;
   renderRoster(); renderDetail(); renderReview(); renderApprovals();
-  if(db){ try{ await db.collection("tasks").doc(t.id).set({...t}); }catch(e){ $("note").textContent="Entscheidung angezeigt, aber nicht gespeichert. Prüf deine Verbindung und versuch es noch einmal."; t.status="review"; renderReview(); renderApprovals(); } }
-  else save(t);
+  if(db){ try{ await db.collection("tasks").doc(nt.id).set(Object.assign({}, nt)); }
+    catch(e){ swap(t); renderReview(); renderApprovals(); $("revTxt").textContent="Nicht gespeichert ("+(e&&e.code||"Fehler")+"). Versuch es noch einmal."; $("note").textContent=$("revTxt").textContent; } }
+  else save(nt);
 }
-$("revOk").onclick=()=>{ if(!state.shown){ $("note").textContent="Wähl zuerst ein Ergebnis aus."; return; } decideTask(state.shown,"approved"); };
-$("revNo").onclick=()=>{ if(!state.shown){ $("note").textContent="Wähl zuerst ein Ergebnis aus."; return; } decideTask(state.shown,"rejected"); };
+const safely = fn => async()=>{ try{ await fn(); }catch(e){ const m="Fehler: "+((e&&e.message)||e); $("revTxt").textContent=m; $("note").textContent=m; } };
+$("revOk").onclick=safely(()=>{ if(!state.shown){ $("revTxt").textContent="Wähl zuerst ein Ergebnis aus."; return; } return decideTask(state.shown,"approved"); });
+$("revNo").onclick=safely(()=>{ if(!state.shown){ $("revTxt").textContent="Wähl zuerst ein Ergebnis aus."; return; } return decideTask(state.shown,"rejected"); });
 $("revCopy").onclick=async()=>{ const t=state.tasks.find(x=>x.id===state.shown); if(!t) return; try{ await navigator.clipboard.writeText(t.result); $("note").textContent="Text kopiert."; }catch(e){ $("note").textContent="Kopieren hat nicht geklappt. Markier den Text und kopier ihn von Hand."; } };
 $("go").onclick=runTask;
 $("stop").onclick=()=>state.running?.ctl.abort();
